@@ -1,5 +1,9 @@
 # zaphttplog
 
+[![GoDoc](https://pkg.go.dev/badge/github.com/Silicon-Ally/zaphttplog?status.svg)](https://pkg.go.dev/github.com/Silicon-Ally/zaphttplog?tab=doc)
+[![CI Workflow](https://github.com/Silicon-Ally/zaphttplog/actions/workflows/test.yml/badge.svg)](https://github.com/Silicon-Ally/zaphttplog/actions?query=branch%3Amain)
+
+
 `zaphttplog` provides a structured request/response logging implementation based on [zap](https://go.uber.org/zap). It provides much the same functionality and API as [Chi's `httplog`](https://github.com/go-chi/httplog), but backed by zap instead of [zerolog](https://github.com/rs/zerolog).
 
 This is useful for cases where you've standardized on zap for logging and want detailed, structured request logging as part of your HTTP middleware
