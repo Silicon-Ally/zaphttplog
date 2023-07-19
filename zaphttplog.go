@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strconv"
 	"strings"
@@ -89,7 +88,7 @@ func NewMiddleware(logger *zap.Logger, options ...Option) func(next http.Handler
 			defer func() {
 				var respBody []byte
 				if ww.Status() >= 400 {
-					respBody, _ = ioutil.ReadAll(buf)
+					respBody, _ = io.ReadAll(buf)
 				}
 				entry.Write(ww.Status(), ww.BytesWritten(), ww.Header(), time.Since(t1), respBody)
 			}()
@@ -136,12 +135,12 @@ func statusLevel(logger *zap.Logger, status int) func(string, ...zap.Field) {
 	}
 }
 
-type objEncoderFn func(enc zapcore.ObjectEncoder)
+type objEncoderFn func(enc zapcore.ObjectEncoder) error
 
 func headerLogField(header http.Header, opts *Options) []objEncoderFn {
 	var out []objEncoderFn
 	addStringField := func(k, v string) {
-		out = append(out, func(enc zapcore.ObjectEncoder) { enc.AddString(k, v) })
+		out = append(out, func(enc zapcore.ObjectEncoder) error { enc.AddString(k, v); return nil })
 	}
 	for k, v := range header {
 		k = strings.ToLower(k)
@@ -179,9 +178,9 @@ func (l *requestLoggerEntry) Write(status, byteCnt int, header http.Header, elap
 	msg.WriteString(statusLabel(status))
 
 	fields := []objEncoderFn{
-		func(enc zapcore.ObjectEncoder) { enc.AddInt("status", status) },
-		func(enc zapcore.ObjectEncoder) { enc.AddInt("bytes", byteCnt) },
-		func(enc zapcore.ObjectEncoder) { enc.AddDuration("elapsed", elapsed) },
+		func(enc zapcore.ObjectEncoder) error { enc.AddInt("status", status); return nil },
+		func(enc zapcore.ObjectEncoder) error { enc.AddInt("bytes", byteCnt); return nil },
+		func(enc zapcore.ObjectEncoder) error { enc.AddDuration("elapsed", elapsed); return nil },
 	}
 
 	if !l.opts.Concise {
@@ -189,10 +188,12 @@ func (l *requestLoggerEntry) Write(status, byteCnt int, header http.Header, elap
 		// the response body so we may inspect the log message sent back to the client.
 		if status >= 400 {
 			body, _ := extra.([]byte)
-			fields = append(fields, func(enc zapcore.ObjectEncoder) { enc.AddByteString("body", body) })
+			fields = append(fields, func(enc zapcore.ObjectEncoder) error { enc.AddByteString("body", body); return nil })
 		}
 		if len(header) > 0 {
-			fields = append(fields, func(enc zapcore.ObjectEncoder) { enc.AddObject("header", toMarshaler(headerLogField(header, l.opts))) })
+			fields = append(fields, func(enc zapcore.ObjectEncoder) error {
+				return enc.AddObject("header", toMarshaler(headerLogField(header, l.opts)))
+			})
 		}
 	}
 
@@ -204,7 +205,9 @@ func (l *requestLoggerEntry) Write(status, byteCnt int, header http.Header, elap
 func toMarshaler(in []objEncoderFn) zapcore.ObjectMarshaler {
 	return zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
 		for _, f := range in {
-			f(enc)
+			if err := f(enc); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -228,24 +231,26 @@ func requestLogField(r *http.Request, opts *Options) zap.Field {
 	requestURL := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.RequestURI)
 
 	fields = append(fields,
-		func(enc zapcore.ObjectEncoder) { enc.AddString("requestURL", requestURL) },
-		func(enc zapcore.ObjectEncoder) { enc.AddString("requestMethod", r.Method) },
-		func(enc zapcore.ObjectEncoder) { enc.AddString("requestPath", r.URL.Path) },
-		func(enc zapcore.ObjectEncoder) { enc.AddString("remoteIP", r.RemoteAddr) },
-		func(enc zapcore.ObjectEncoder) { enc.AddString("proto", r.Proto) },
+		func(enc zapcore.ObjectEncoder) error { enc.AddString("requestURL", requestURL); return nil },
+		func(enc zapcore.ObjectEncoder) error { enc.AddString("requestMethod", r.Method); return nil },
+		func(enc zapcore.ObjectEncoder) error { enc.AddString("requestPath", r.URL.Path); return nil },
+		func(enc zapcore.ObjectEncoder) error { enc.AddString("remoteIP", r.RemoteAddr); return nil },
+		func(enc zapcore.ObjectEncoder) error { enc.AddString("proto", r.Proto); return nil },
 	)
 	if reqID := middleware.GetReqID(r.Context()); reqID != "" {
-		fields = append(fields, func(enc zapcore.ObjectEncoder) { enc.AddString("requestID", reqID) })
+		fields = append(fields, func(enc zapcore.ObjectEncoder) error { enc.AddString("requestID", reqID); return nil })
 	}
 
 	if opts.Concise {
 		return zap.Object("httpRequest", toMarshaler(fields))
 	}
 
-	fields = append(fields, func(enc zapcore.ObjectEncoder) { enc.AddString("scheme", scheme) })
+	fields = append(fields, func(enc zapcore.ObjectEncoder) error { enc.AddString("scheme", scheme); return nil })
 
 	if len(r.Header) > 0 {
-		fields = append(fields, func(enc zapcore.ObjectEncoder) { enc.AddObject("header", toMarshaler(headerLogField(r.Header, opts))) })
+		fields = append(fields, func(enc zapcore.ObjectEncoder) error {
+			return enc.AddObject("header", toMarshaler(headerLogField(r.Header, opts)))
+		})
 	}
 
 	return zap.Object("httpRequest", toMarshaler(fields))
